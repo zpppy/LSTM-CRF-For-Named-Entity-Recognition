@@ -5,7 +5,8 @@
 - 模型构建阶段；采用lstm+crf的架构计算每种seq_tag的分数。分数由两部分组成：①由lstm计算得到的unary_score（一元分数）；②由crf层维护的binary_score（二元分数）；
 - 模型训练阶段通过极大对数似然估计更新参数；预测阶段采用维特比算法求除最有可能的 sequence_tag。
 四、结果；迭代50次后，模型的评价指标如下：accuracy:  98.53%; precision:  90.31%; recall:  90.09%; FB1:  90.20。（其实到42次的时候模型差不多已经收敛了）。
-github地址：https://github.com/zpppy/LSTM-CRF-For-Named-Entity-Recognition
+
+- github地址：https://github.com/zpppy/LSTM-CRF-For-Named-Entity-Recognition
 
 模型训练：
 python main.py --train=True --clean=True
