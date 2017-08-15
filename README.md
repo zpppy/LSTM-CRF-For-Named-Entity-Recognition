@@ -6,6 +6,8 @@
 - 模型训练阶段通过极大对数似然估计更新参数；预测阶段采用维特比算法求除最有可能的 sequence_tag。
 四、结果；迭代50次后，模型的评价指标如下：accuracy:  98.53%; precision:  90.31%; recall:  90.09%; FB1:  90.20。（其实到42次的时候模型差不多已经收敛了）。
 
+###关于crf层的实现及其源码解析可以参考我的个人博客：
+http://www.hackerfun.cn/admin/article/article/45/
 
 模型训练：
 python main.py --train=True --clean=True
