@@ -172,6 +172,7 @@ def create_model(session, Model_class, path, load_vec, config, id_to_char, logge
     model = Model_class(config)
 
     ckpt = tf.train.get_checkpoint_state(path)
+    #假如模型已经训练好了，可以直接读取模型参数
     if ckpt and tf.train.checkpoint_exists(ckpt.model_checkpoint_path):
         logger.info("Reading model parameters from %s" % ckpt.model_checkpoint_path)
         model.saver.restore(session, ckpt.model_checkpoint_path)

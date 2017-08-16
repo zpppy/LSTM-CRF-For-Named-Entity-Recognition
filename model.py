@@ -1,11 +1,12 @@
 # encoding = utf8
 import numpy as np
 import tensorflow as tf
-from tensorflow.contrib.crf import crf_log_likelihood
+
+from crf import crf_log_likelihood
 from tensorflow.contrib.crf import viterbi_decode
 from tensorflow.contrib.layers.python.layers import initializers
 
-import rnncell as rnn
+import rnn_module as rnn
 from utils import result_to_json
 from data_utils import create_input, iobes_iob
 
@@ -23,12 +24,12 @@ class Model(object):
         self.num_chars = config["num_chars"]
         self.num_segs = 4
 
+        #创建变量
         self.global_step = tf.Variable(0, trainable=False)
         self.best_dev_f1 = tf.Variable(0.0, trainable=False)
         self.best_test_f1 = tf.Variable(0.0, trainable=False)
+        #https://github.com/tensorflow/tensorflow/blob/r1.2/tensorflow/contrib/layers/python/layers/initializers.py
         self.initializer = initializers.xavier_initializer()
-
-        # add placeholders for the model
 
         self.char_inputs = tf.placeholder(dtype=tf.int32,
                                           shape=[None, None],
@@ -44,24 +45,23 @@ class Model(object):
         self.dropout = tf.placeholder(dtype=tf.float32,
                                       name="Dropout")
 
+        #目的是为了求出句子的真实长度!
         used = tf.sign(tf.abs(self.char_inputs))
         length = tf.reduce_sum(used, reduction_indices=1)
         self.lengths = tf.cast(length, tf.int32)
+
         self.batch_size = tf.shape(self.char_inputs)[0]
         self.num_steps = tf.shape(self.char_inputs)[-1]
 
-        # embeddings for chinese character and segmentation representation
+        #embedding为120维：词级别的20维+字级别的100维
         embedding = self.embedding_layer(self.char_inputs, self.seg_inputs, config)
-
+        
         # apply dropout before feed to lstm layer
-        lstm_inputs = tf.nn.dropout(embedding, self.dropout)
-
+        lstm_inputs = tf.nn.dropout(embedding, self.dropout) # shape=(?, ?, 120)
         # bi-directional lstm layer
-        lstm_outputs = self.biLSTM_layer(lstm_inputs, self.lstm_dim, self.lengths)
-
+        lstm_outputs = self.biLSTM_layer(lstm_inputs, self.lstm_dim, self.lengths) #shape=(?, ?, 200)
         # logits for tags
-        self.logits = self.project_layer(lstm_outputs)
-
+        self.logits = self.project_layer(lstm_outputs)  #Tensor("project/Reshape:0", shape=(?, ?, 13), dtype=float32)
         # loss of the model
         self.loss = self.loss_layer(self.logits, self.lengths)
 
@@ -78,6 +78,7 @@ class Model(object):
 
             # apply grad clip to avoid gradient explosion
             grads_vars = self.opt.compute_gradients(self.loss)
+            # g,v v表示参数 g表示该参数对应的偏微分
             capped_grads_vars = [[tf.clip_by_value(g, -self.config["clip"], self.config["clip"]), v]
                                  for g, v in grads_vars]
             self.train_op = self.opt.apply_gradients(capped_grads_vars, self.global_step)
@@ -107,7 +108,9 @@ class Model(object):
                         shape=[self.num_segs, self.seg_dim],
                         initializer=self.initializer)
                     embedding.append(tf.nn.embedding_lookup(self.seg_lookup, seg_inputs))
+        
             embed = tf.concat(embedding, axis=-1)
+        
         return embed
 
     def biLSTM_layer(self, lstm_inputs, lstm_dim, lengths, name=None):
@@ -145,6 +148,7 @@ class Model(object):
 
                 b = tf.get_variable("b", shape=[self.lstm_dim], dtype=tf.float32,
                                     initializer=tf.zeros_initializer())
+                # 把三维张量变成二维
                 output = tf.reshape(lstm_outputs, shape=[-1, self.lstm_dim*2])
                 hidden = tf.tanh(tf.nn.xw_plus_b(output, W, b))
 
@@ -158,7 +162,7 @@ class Model(object):
 
                 pred = tf.nn.xw_plus_b(hidden, W, b)
 
-            return tf.reshape(pred, [-1, self.num_steps, self.num_tags])
+            return tf.reshape(pred, [self.batch_size, self.num_steps, self.num_tags])
 
     def loss_layer(self, project_logits, lengths, name=None):
         """
@@ -168,24 +172,31 @@ class Model(object):
         """
         with tf.variable_scope("crf_loss"  if not name else name):
             small = -1000.0
-            # pad logits for crf loss
+            
             start_logits = tf.concat(
                 [small * tf.ones(shape=[self.batch_size, 1, self.num_tags]), tf.zeros(shape=[self.batch_size, 1, 1])], axis=-1)
+            
             pad_logits = tf.cast(small * tf.ones([self.batch_size, self.num_steps, 1]), tf.float32)
+            
             logits = tf.concat([project_logits, pad_logits], axis=-1)
-            logits = tf.concat([start_logits, logits], axis=1)
-            targets = tf.concat(
-                [tf.cast(self.num_tags*tf.ones([self.batch_size, 1]), tf.int32), self.targets], axis=-1)
 
+            logits = tf.concat([start_logits, logits], axis=1)
+
+            targets = tf.concat(
+                #在targets后面又增加了一维，值为13(开始标签)，原本是0-12
+                [tf.cast(self.num_tags*tf.ones([self.batch_size, 1]), tf.int32), self.targets], axis=-1)
+            #多了个开始标签，所以加1
             self.trans = tf.get_variable(
                 "transitions",
                 shape=[self.num_tags + 1, self.num_tags + 1],
                 initializer=self.initializer)
+            # 同理，多了个开始标签，所以lengths+1
             log_likelihood, self.trans = crf_log_likelihood(
                 inputs=logits,
                 tag_indices=targets,
                 transition_params=self.trans,
                 sequence_lengths=lengths+1)
+            #极大化负对数似然   除以batch_size
             return tf.reduce_mean(-log_likelihood)
 
     def create_feed_dict(self, is_train, batch):
@@ -204,7 +215,6 @@ class Model(object):
             feed_dict[self.targets] = np.asarray(tags)
             feed_dict[self.dropout] = self.config["dropout_keep"]
         return feed_dict
-
     def run_step(self, sess, is_train, batch):
         """
         :param sess: session to run the batch
@@ -213,6 +223,7 @@ class Model(object):
         :return: batch result, loss of the batch or logits
         """
         feed_dict = self.create_feed_dict(is_train, batch)
+
         if is_train:
             global_step, loss, _ = sess.run(
                 [self.global_step, self.loss, self.train_op],
@@ -259,8 +270,11 @@ class Model(object):
             batch_paths = self.decode(scores, lengths, trans)
             for i in range(len(strings)):
                 result = []
+                # 得到真实的string，也就是没有补0的原始string
                 string = strings[i][:lengths[i]]
+                #gold是指目标tag
                 gold = iobes_iob([id_to_tag[int(x)] for x in tags[i][:lengths[i]]])
+                #pred是指实际输出的tag
                 pred = iobes_iob([id_to_tag[int(x)] for x in batch_paths[i][:lengths[i]]])
                 for char, gold, pred in zip(string, gold, pred):
                     result.append(" ".join([char, gold, pred]))

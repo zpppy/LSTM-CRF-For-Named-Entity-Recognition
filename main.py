@@ -1,6 +1,6 @@
 # encoding=utf8
 
-import sys
+
 import codecs
 import pickle
 import itertools
@@ -9,24 +9,25 @@ from collections import OrderedDict
 import tensorflow as tf
 import numpy as np
 from model import Model
-from loader import load_sentences, update_tag_scheme
-from loader import char_mapping, tag_mapping
-from loader import augment_with_pretrained, prepare_dataset
+from data_utils import load_sentences, update_tag_scheme
+from data_utils import char_mapping, tag_mapping
+from data_utils import augment_with_pretrained, prepare_dataset
 from utils import get_logger, make_path, clean, create_model, save_model
 from utils import print_config, save_config, load_config, test_ner
 from data_utils import load_word2vec, create_input, input_from_line, BatchManager
 
 import os
 file_path = os.path.dirname(os.path.abspath(__file__))
-data_dir = os.path.join(file_path, "data")
-train_dir = os.path.join(data_dir, "example.train")
-dev_dir = os.path.join(data_dir, "example.dev")
-test_dir = os.path.join(data_dir, "example.test")
+data_dir = os.path.join(file_path, "source")
+train_dir = os.path.join(data_dir, "train.txt")
+dev_dir = os.path.join(data_dir, "dev.txt")
+test_dir = os.path.join(data_dir, "test.txt")
 
 flags = tf.app.flags
 flags.DEFINE_boolean("clean",       False,      "clean train folder")
 flags.DEFINE_boolean("train",       False,      "Wither train the model")
 # configurations for the model
+# 从两个方面训练词向量：单词 和 词语
 flags.DEFINE_integer("seg_dim",     20,         "Embedding size for segmentation, 0 if not used")
 flags.DEFINE_integer("char_dim",    100,        "Embedding size for characters")
 flags.DEFINE_integer("lstm_dim",    100,        "Num of hidden units in LSTM")
@@ -110,18 +111,16 @@ def evaluate(sess, model, name, data, id_to_tag, logger):
 
 
 def train():
-    # load data sets
+    # 加载数据集
     train_sentences = load_sentences(FLAGS.train_file, FLAGS.lower, FLAGS.zeros)
     dev_sentences = load_sentences(FLAGS.dev_file, FLAGS.lower, FLAGS.zeros)
     test_sentences = load_sentences(FLAGS.test_file, FLAGS.lower, FLAGS.zeros)
 
-    # Use selected tagging scheme (IOB / IOBES)
+    # 选择tag形式 (IOB / IOBES)  默认使用IOBES
     update_tag_scheme(train_sentences, FLAGS.tag_schema)
     update_tag_scheme(test_sentences, FLAGS.tag_schema)
 
-    # create maps if not exist
     if not os.path.isfile(FLAGS.map_file):
-        # create dictionary for word
         if FLAGS.pre_emb:
             dico_chars_train = char_mapping(train_sentences, FLAGS.lower)[0]
             dico_chars, char_to_id, id_to_char = augment_with_pretrained(
@@ -140,9 +139,11 @@ def train():
             pickle.dump([char_to_id, id_to_char, tag_to_id, id_to_tag], f)
     else:
         with open(FLAGS.map_file, "rb") as f:
+            # {'S-LOC': 10, 'E-LOC': 3, 'B-ORG': 4, 'S-PER': 11, 'S-ORG': 12, 'O': 0,
+            # 'E-ORG': 5, 'I-LOC': 6, 'I-PER': 7, 'I-ORG': 1, 'B-PER': 8, 'B-LOC': 2, 'E-PER': 9}
             char_to_id, id_to_char, tag_to_id, id_to_tag = pickle.load(f)
 
-    # prepare data, get a collection of list containing index
+    # 转化成数字化的数据
     train_data = prepare_dataset(
         train_sentences, char_to_id, tag_to_id, FLAGS.lower
     )
@@ -153,12 +154,14 @@ def train():
         test_sentences, char_to_id, tag_to_id, FLAGS.lower
     )
     print("%i / %i / %i sentences in train / dev / test." % (
-        len(train_data), 0, len(test_data)))
+        len(train_data), len(dev_data), len(test_data)))
 
+
+    #长度不足补0
     train_manager = BatchManager(train_data, FLAGS.batch_size)
     dev_manager = BatchManager(dev_data, 100)
     test_manager = BatchManager(test_data, 100)
-    # make path for store log and model if not exist
+    
     make_path(FLAGS)
     if os.path.isfile(FLAGS.config_file):
         config = load_config(FLAGS.config_file)
@@ -170,16 +173,18 @@ def train():
     log_path = os.path.join("log", FLAGS.log_file)
     logger = get_logger(log_path)
     print_config(config, logger)
-
-    # limit GPU memory
+    
+    # GPU设置
     tf_config = tf.ConfigProto()
     tf_config.gpu_options.allow_growth = True
-    steps_per_epoch = train_manager.len_data
+    steps_per_epoch = train_manager.len_data 
+ 
     with tf.Session(config=tf_config) as sess:
         model = create_model(sess, Model, FLAGS.ckpt_path, load_word2vec, config, id_to_char, logger)
         logger.info("start training")
         loss = []
-        for i in range(1):
+        for i in range(100):
+            # 每次喂入一batch的数据
             for batch in train_manager.iter_batch(shuffle=True):
                 step, batch_loss = model.run_step(sess, True, batch)
                 loss.append(batch_loss)
@@ -188,6 +193,7 @@ def train():
                     logger.info("iteration:{} step:{}/{}, "
                                 "NER loss:{:>9.6f}".format(
                         iteration, step%steps_per_epoch, steps_per_epoch, np.mean(loss)))
+                    # 每100次算一次平均loss
                     loss = []
 
             best = evaluate(sess, model, "dev", dev_manager, id_to_tag, logger)
@@ -199,7 +205,6 @@ def train():
 def evaluate_line():
     config = load_config(FLAGS.config_file)
     logger = get_logger(FLAGS.log_file)
-    # limit GPU memory
     tf_config = tf.ConfigProto()
     tf_config.gpu_options.allow_growth = True
     with open(FLAGS.map_file, "rb") as f:
