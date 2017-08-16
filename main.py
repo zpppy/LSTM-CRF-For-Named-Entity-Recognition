@@ -184,7 +184,6 @@ def train():
         logger.info("start training")
         loss = []
         for i in range(100):
-            # 每次喂入一batch的数据
             for batch in train_manager.iter_batch(shuffle=True):
                 step, batch_loss = model.run_step(sess, True, batch)
                 loss.append(batch_loss)
