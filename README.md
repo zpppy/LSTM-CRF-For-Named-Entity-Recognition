@@ -7,7 +7,7 @@
 - 结果；迭代50次后，模型的评价指标如下：accuracy:  98.53%; precision:  90.31%; recall:  90.09%; FB1:  90.20。（其实到42次的时候模型差不多已经收敛了）。
 
 ### 关于crf层的实现及其源码解析可以参考我的个人博客：
-http://www.hackerfun.cn/admin/article/article/45/
+https://blog.csdn.net/asrgreek/article/details/87905581
 
 模型训练：
 python main.py --train=True --clean=True
